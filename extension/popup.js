@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     const statusEl = document.getElementById('status');
     const checkBtn = document.getElementById('checkBackend');
-    const optionsBtn = document.getElementById('optionsBtn');
+
     const startCaptureBtn = document.getElementById('startCapture');
 
     // --- Tab Capture Logic ---
@@ -50,9 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     checkBtn.addEventListener('click', checkBackend);
     
-    optionsBtn.addEventListener('click', () => {
-        alert('Options page not implemented yet. You can set backend URL via extension storage.');
-    });
+
 
     // Initial check on load
     checkBackend();
