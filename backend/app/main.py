@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import logging
+
 
 from app.routers import fact_check
 from app.config import config
@@ -33,10 +33,10 @@ if config.EXTENSION_ID:
     origins = [
         f"chrome-extension://{config.EXTENSION_ID}",
         "http://localhost:3000",
-        "http://localhost:8000",
+        "http://localhost:8001",
         "http://localhost:8080",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8001",
         "http://127.0.0.1:8080",
     ]
 

@@ -5,9 +5,7 @@ from pydantic import model_validator
 class Config(BaseSettings):
     """Application configuration validated by Pydantic."""
 
-    # Server settings
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    # Server settings are handled by Uvicorn CLI and environment variables natively.
 
     # LLM provider selection: ollama, or nim
     LLM_PROVIDER: str = "ollama"

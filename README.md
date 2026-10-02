@@ -223,7 +223,7 @@ See [Setup Instructions](#setup-instructions) for detailed steps.
    uvicorn app.main:app --reload
    
    # Production mode
-   uvicorn app.main:app --host 0.0.0.0 --port 8000
+   uvicorn app.main:app --host 0.0.0.0 --port 8001
    ```
 
 ### Extension Installation
@@ -271,7 +271,7 @@ See [Setup Instructions](#setup-instructions) for detailed steps.
   - `scripting`: Inject content scripts
   - `storage`: Persist backend URL configuration
 - **Host Permissions**: Restricted to specific domains
-  - `http://localhost:8000/*`: Local development backend
+  - `http://localhost:8001/*`: Local development backend
   - `https://*.tavily.com/*`: Tavily search API
   - `https://api.openai.com/*`: OpenAI API
 - **Content Script Safety**:
@@ -302,7 +302,7 @@ See [Setup Instructions](#setup-instructions) for detailed steps.
 ### Extension Issues
 | Symptom | Possible Cause | Solution |
 |---------|----------------|----------|
-| No fact-check results appearing | Backend not running | Verify uvicorn is running on port 8000 |
+| No fact-check results appearing | Backend not running | Verify uvicorn is running on port 8001 |
 | Extension icon grayed out | YouTube not detected | Refresh page, ensure on YouTube.com |
 | "Failed to contact service" errors | Network/API issues | Check backend logs, verify API keys |
 | Captions not being processed | YouTube DOM changed | Report issue with specific video URL |
@@ -315,7 +315,7 @@ See [Setup Instructions](#setup-instructions) for detailed steps.
 | Import errors | Dependencies not installed | Re-run `pip install -r requirements.txt` |
 | pydantic-core build fail | Missing Rust/C++ tools | Install Rust and Visual Studio Build Tools |
 | API key errors | Invalid/missing keys | Verify .env file contains correct keys |
-| Port already in use | Another service on 8000 | Change PORT in .env or stop conflicting service |
+| Port already in use | Another service on 8001 | Change PORT in .env or stop conflicting service |
 | Slow response | API rate limits | Check OpenAI/Tavily usage, consider upgrading plans |
 
 ### Debugging Tips
@@ -325,7 +325,7 @@ See [Setup Instructions](#setup-instructions) for detailed steps.
    
 2. **Test endpoints directly**:
    ```bash
-   curl -X POST http://localhost:8000/api/v1/fact-check \
+   curl -X POST http://localhost:8001/api/v1/fact-check \
      -H "Content-Type: application/json" \
      -d '{"text":"The sky is blue."}'
    ```
