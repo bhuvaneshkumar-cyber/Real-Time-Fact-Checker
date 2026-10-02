@@ -123,6 +123,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     return false;
   }
+  
+  // ─── ROUTE 4: Stop Tab Capture (popup.js) ───
+  if (message.action === 'stopTabCapture') {
+    chrome.runtime.sendMessage({ action: 'stopTabStream' });
+    return false;
+  }
 });
 
 /**

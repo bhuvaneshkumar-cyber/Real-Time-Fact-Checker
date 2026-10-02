@@ -58,6 +58,16 @@
             background: rgba(40, 167, 69, 0.4);
         }
 
+        .btn-danger {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid rgba(220, 53, 69, 0.4);
+            color: #ffb3ba;
+            font-weight: bold;
+        }
+        .btn-danger:hover {
+            background: rgba(220, 53, 69, 0.4);
+        }
+
         button:last-child {
             margin-bottom: 0; 
         }
@@ -70,6 +80,7 @@
     <div class="status" id="status">Checking connection...</div>
     
     <button id="startCapture" class="btn-primary">Start Listening to Tab</button>
+    <button id="stopCapture" class="btn-danger" style="display: none;">Stop Listening</button>
     
     <button id="checkBackend">Check Backend</button>
 

@@ -3,6 +3,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const checkBtn = document.getElementById('checkBackend');
 
     const startCaptureBtn = document.getElementById('startCapture');
+    const stopCaptureBtn = document.getElementById('stopCapture');
+
+    // Restore state
+    chrome.storage.local.get(['isListening'], (res) => {
+        if (res.isListening) {
+            setListeningState(true);
+        }
+    });
+
+    function setListeningState(isListening) {
+        if (isListening) {
+            statusEl.textContent = 'Listening to tab...';
+            statusEl.className = 'status online';
+            startCaptureBtn.style.display = 'none';
+            stopCaptureBtn.style.display = 'block';
+        } else {
+            // Re-check backend to reset status text
+            checkBackend();
+            startCaptureBtn.style.display = 'block';
+            stopCaptureBtn.style.display = 'none';
+        }
+    }
 
     // --- Tab Capture Logic ---
     startCaptureBtn.addEventListener('click', async () => {
@@ -16,13 +38,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 tabId: tab.id 
             });
             
+            
             // Update UI to show we are listening
-            statusEl.textContent = 'Listening to tab...';
-            statusEl.className = 'status online';
-            startCaptureBtn.textContent = 'Listening...';
-            startCaptureBtn.style.opacity = '0.7';
-            startCaptureBtn.style.cursor = 'default';
+            chrome.storage.local.set({ isListening: true });
+            setListeningState(true);
         }
+    });
+
+    stopCaptureBtn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'stopTabCapture' });
+        chrome.storage.local.set({ isListening: false });
+        setListeningState(false);
     });
 
     // --- Backend Check Logic ---

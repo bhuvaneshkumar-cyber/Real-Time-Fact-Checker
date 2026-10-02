@@ -14,9 +14,23 @@ const transcriberPromise = pipeline('automatic-speech-recognition', 'Xenova/whis
 chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'processTabStream') {
         startAudioProcessing(message.streamId);
+    } else if (message.action === 'stopTabStream') {
+        stopAudioProcessing();
     }
 });
 let currentMediaStream = null; // Track the active stream
+
+function stopAudioProcessing() {
+    if (currentMediaStream) {
+        currentMediaStream.getTracks().forEach(track => track.stop());
+        currentMediaStream = null;
+    }
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+    }
+    console.log("Fact Checker: Stopped audio capture.");
+}
 
 async function startAudioProcessing(streamId) {
     console.log("Fact Checker: Tab stream received. Waiting for model to be ready...");
