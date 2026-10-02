@@ -256,8 +256,25 @@
     // at the end of the buffer (handles YouTube's overlapping caption frames).
     if (state.captionBuffer.length === 0) {
       state.captionBuffer = text;
-    } else if (!state.captionBuffer.endsWith(text)) {
-      state.captionBuffer += ' ' + text;
+    } else {
+      // Find the longest overlap between the end of the buffer and the start of the new text
+      let overlap = 0;
+      const minLen = Math.min(state.captionBuffer.length, text.length);
+      for (let i = minLen; i > 0; i--) {
+        if (state.captionBuffer.endsWith(text.substring(0, i))) {
+          overlap = i;
+          break;
+        }
+      }
+
+      if (overlap > 0) {
+        const newPart = text.substring(overlap).trim();
+        if (newPart) {
+          state.captionBuffer += (state.captionBuffer.endsWith(' ') ? '' : ' ') + newPart;
+        }
+      } else {
+        state.captionBuffer += (state.captionBuffer.endsWith(' ') ? '' : ' ') + text;
+      }
     }
 
     console.log(`[FactChecker] Buffer: ${state.captionBuffer.length} chars`);
