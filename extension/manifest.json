@@ -1,30 +1,29 @@
 {
   "manifest_version": 3,
   "name": "Real-Time Fact Checker",
-  "description": "Fact-checks audio and captions from YouTube videos and web podcasts in real-time.",
-  "version": "1.0.0",
-  "action": {
-    "default_popup": "popup.html"
+  "description": "Live fact-checks of YouTube captions, any tab's audio, or selected text, using a local LLM.",
+  "version": "2.0.0",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "storage",
-    "tabCapture", 
-    "offscreen" 
-  ],
-  "host_permissions": [
-    "http://localhost:8001/*"
-  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "permissions": ["activeTab", "contextMenus", "offscreen", "scripting", "storage", "tabCapture"],
+  "host_permissions": ["http://localhost:8001/*"],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content_script.js"],
-      "css": ["styles.css"],
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["ui.js", "content_script.js"],
       "run_at": "document_idle"
     }
   ],

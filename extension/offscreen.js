@@ -1,153 +1,83 @@
+// Offscreen document: captures the tab's audio, transcribes it locally with Whisper,
+// and posts transcripts to background.js. Closing this document stops everything.
 import { pipeline, env } from './lib/transformers.min.js';
 
 env.allowLocalModels = false;
-env.allowRemoteModels = true; 
+env.backends.onnx.wasm.numThreads = 1; // extension pages aren't cross-origin isolated: no WASM threads
 
-env.backends.onnx.wasm.numThreads = 1;
+const RATE = 16000;        // Whisper wants 16 kHz mono
+const CHUNK = RATE * 8;    // 8 s windows give Whisper enough context not to hallucinate
+const OVERLAP = RATE * 2;  // carried into the next window so boundary words aren't cut (content script de-dupes)
+const SILENCE = 0.005;     // mean |amplitude| below this: skip the window
 
-let audioContext = null;
+const post = (msg) => chrome.runtime.sendMessage(msg).catch(() => {});
+const status = (state, detail) => post({ action: 'audioStatus', state, detail });
 
-// Create a Promise that resolves when the model is fully loaded
-console.log("Fact Checker: Initializing Whisper Model download/load...");
-const transcriberPromise = pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
+start().catch((e) => status('error', `Audio capture failed: ${e.message}`));
 
-chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'processTabStream') {
-        startAudioProcessing(message.streamId);
-    } else if (message.action === 'stopTabStream') {
-        stopAudioProcessing();
+async function start() {
+  // Claim the stream before loading the model: tab-capture stream IDs expire within seconds.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: location.hash.slice(1) } },
+  });
+  stream.getAudioTracks()[0].addEventListener('ended', () => status('off', ''));
+
+  // Capturing a tab mutes it: play it back so the user still hears it, at full quality.
+  const speakers = new AudioContext();
+  speakers.createMediaStreamSource(stream).connect(speakers.destination);
+
+  status('loading', 'Loading speech model…');
+  const files = {};
+  let shown = -1;
+  const transcribe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
+    progress_callback: (p) => { // first run only: later runs load from the browser cache
+      if (p.status !== 'progress') return;
+      files[p.file] = [p.loaded, p.total];
+      const [loaded, total] = Object.values(files).reduce((a, f) => [a[0] + f[0], a[1] + f[1]], [0, 0]);
+      const pct = Math.floor((loaded / total) * 100);
+      if (pct !== shown) status('loading', `Downloading speech model… ${(shown = pct)}%`);
+    },
+  });
+  status('listening', 'Listening to tab audio');
+
+  const ctx = new AudioContext({ sampleRate: RATE });
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  ctx.createMediaStreamSource(stream).connect(processor);
+  processor.connect(ctx.destination); // outputs silence, but onaudioprocess only fires while connected
+
+  let parts = [], size = 0, busy = false;
+  processor.onaudioprocess = async (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    parts.push(new Float32Array(input)); // copy: the input buffer is reused
+    size += input.length;
+    if (size < CHUNK || busy) return;
+
+    const audio = new Float32Array(size);
+    let offset = 0;
+    for (const p of parts) { audio.set(p, offset); offset += p.length; }
+    parts = [audio.slice(-OVERLAP)];
+    size = OVERLAP;
+    if (audio.reduce((sum, x) => sum + Math.abs(x), 0) / audio.length < SILENCE) return;
+
+    busy = true;
+    try {
+      const text = clean((await transcribe(audio)).text);
+      if (text) post({ action: 'transcript', text });
+    } catch (err) {
+      console.error('Fact Checker: transcription failed', err);
+    } finally {
+      busy = false;
     }
-});
-let currentMediaStream = null; // Track the active stream
-
-function stopAudioProcessing() {
-    if (currentMediaStream) {
-        currentMediaStream.getTracks().forEach(track => track.stop());
-        currentMediaStream = null;
-    }
-    if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-    }
-    console.log("Fact Checker: Stopped audio capture.");
+  };
 }
 
-async function startAudioProcessing(streamId) {
-    console.log("Fact Checker: Tab stream received. Waiting for model to be ready...");
-    
-    // This will pause execution here until the model is 100% downloaded and ready
-    const transcriber = await transcriberPromise;
-    console.log("Fact Checker: Model is ready! Starting audio capture...");
-
-    try {
-        // Clean up previous audio streams if the user clicked "Start" on a new tab
-        if (currentMediaStream) {
-            currentMediaStream.getTracks().forEach(track => track.stop());
-        }
-        if (audioContext) {
-            await audioContext.close();
-        }
-
-        currentMediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                mandatory: {
-                    chromeMediaSource: 'tab',
-                    chromeMediaSourceId: streamId
-                }
-            }
-        });
-
-        audioContext = new AudioContext({ sampleRate: 16000 });
-        const source = audioContext.createMediaStreamSource(currentMediaStream);
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-
-        let audioBuffer = [];
-        let isProcessing = false;
-
-        processor.onaudioprocess = async (e) => {
-            const inputData = e.inputBuffer.getChannelData(0);
-            audioBuffer.push(...inputData);
-
-            // FIX 1: Increase chunk size to 8 seconds (16000 * 8 = 128000 samples)
-            // This gives Whisper enough context to stop panicking
-            if (audioBuffer.length >= 128000 && !isProcessing) {
-                isProcessing = true;
-                
-                const chunkToProcess = new Float32Array(audioBuffer);
-                
-                // Keep the last 2 seconds (32000 samples) in the buffer for the next chunk
-                const overlapSamples = 32000;
-                audioBuffer = audioBuffer.slice(audioBuffer.length - overlapSamples);
-
-                // Silence Detection
-                let sum = 0;
-                for (let i = 0; i < chunkToProcess.length; i++) {
-                    sum += Math.abs(chunkToProcess[i]);
-                }
-                const averageVolume = sum / chunkToProcess.length;
-
-                if (averageVolume < 0.005) {
-                    isProcessing = false;
-                    return;
-                }
-
-                try {
-                    const output = await transcriber(chunkToProcess);
-                    const rawText = Array.isArray(output) ? output[0].text : output.text;
-
-                    if (!rawText) {
-                        isProcessing = false;
-                        return;
-                    }
-
-                    const text = rawText.trim();
-                    const isJustPunctuation = /^[.,?!\[\]\s]+$/.test(text);
-
-                    // FIX 2: The "Word Entropy" Hallucination Filter
-                    const isAudioTag = text.includes('[') || text.includes(']') || text.includes('(') || text.includes(')');
-                    // We calculate the ratio of unique words to total words
-                    const cleanText = text.toLowerCase().replace(/[.,?!\[\]]/g, '');
-                    const words = cleanText.split(/\s+/);
-                    const uniqueWords = new Set(words);
-                    const wordVarietyRatio = uniqueWords.size / words.length;
-
-                    // Rule 1: The overall entropy ratio (Catches pure loops)
-                    const isLowEntropy = words.length >= 6 && wordVarietyRatio < 0.45;
-
-                    // Rule 2: Single word repeated 4 or more times in a row (e.g., "talking talking talking talking")
-                    const hasWordLoop = /(\b\w+\b)(?:\s+\1){3,}/.test(cleanText);
-
-                    // Rule 3: Phrase (2 to 5 words) repeated 3 or more times in a row (e.g., "what I was on what I was on what I was on")
-                    const hasPhraseLoop = /(\b(?:\w+\s+){1,4}\w+\b)(?:\s+\1){2,}/.test(cleanText);
-
-                    // If ANY of these rules trigger, it's a hallucination
-                    const isHallucinationLoop = isLowEntropy || hasWordLoop || hasPhraseLoop;
-                    
-                    // Require at least 3 words and 15 characters to be considered a potential "claim"
-                    const isLongEnough = text.length > 15 && words.length >= 3;
-
-                    if (isLongEnough && !isJustPunctuation && !isAudioTag && !isHallucinationLoop) {
-                        console.log("✅ Transcribed Clean Sentence:", text);
-                        
-                        // Send valid text to the background script -> Python Backend!
-                        chrome.runtime.sendMessage({
-                            action: 'transcriptionReady',
-                            text: text
-                        });
-                    } else if (isHallucinationLoop) {
-                        console.warn("🗑️ Dropped Hallucination Loop:", text.substring(0, 80) + "...");
-                    }
-                } catch (error) {
-                    console.error("Fact Checker Inference Error:", error);
-                } finally {
-                    isProcessing = false;
-                }
-            }
-        };
-    } catch (error) {
-        console.error("Fact Checker: Failed to grab audio stream. Please refresh the YouTube tab.", error);
-    }
+// Whisper-tiny hallucinates on music and noise: strip sound tags, drop repetition loops.
+function clean(raw) {
+  const text = (raw || '').replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|♪/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = text.toLowerCase().replace(/[^\w\s']/g, '').split(' ').filter(Boolean);
+  const joined = words.join(' ');
+  const looping = (words.length >= 6 && new Set(words).size / words.length < 0.45) // mostly repeats
+    || /\b(\w+)(?: \1\b){3,}/.test(joined)                                       // word x4 in a row
+    || /\b((?:\w+ ){1,4}\w+)(?: \1\b){2,}/.test(joined);                         // phrase x3 in a row
+  return text.length > 15 && words.length >= 3 && !looping ? text : '';
 }

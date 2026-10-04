@@ -1,135 +1,68 @@
 """
-Benchmark script for Ollama models on this device.
-Tests speed (tok/s) and quality of fact-checking relevant output.
-Run: python benchmark_models.py
+Pick the best local model: runs the real fact-check pipeline on labelled snippets and reports
+accuracy + warm latency for each installed Ollama model (or the ones given as arguments).
+
+Run from backend/:  python benchmark_models.py [model ...]
 """
-import urllib.request
-import json
+import asyncio
+import statistics
+import sys
 import time
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODELS = ["llama3.2:3b", "phi3:mini", "gemma2:2b", "granite3-moe:3b"]
+from app import checker
 
-# A real-world prompt similar to what our fact-checker sends
-PROMPT = """You are a fact-checking AI. Extract verifiable factual claims from the text below.
-Return a JSON array of objects with keys "claim" (string) and "checkable" (boolean).
-Only include claims that can be verified with external sources.
+# (transcript snippet, acceptable verdicts; empty = nothing checkable)
+CASES = [
+    ("so the eiffel tower was finished in 1889 for the world's fair in paris", {"TRUE"}),
+    ("and you know the great wall of china is actually visible from the moon with the naked eye", {"FALSE", "MISLEADING"}),
+    ("water boils at 50 degrees celsius at sea level which is why pasta cooks so fast", {"FALSE"}),
+    ("an adult human body has 206 bones", {"TRUE"}),
+    ("the first man to walk on the moon was buzz aldrin back in 1969", {"FALSE"}),
+    ("the pacific is the smallest ocean on earth", {"FALSE"}),
+    ("light from the sun takes about eight minutes to reach the earth", {"TRUE"}),
+    ("einstein got his nobel prize for the theory of relativity", {"FALSE", "MISLEADING"}),
+    ("mount everest is the tallest mountain above sea level at about 8849 meters", {"TRUE"}),
+    ("we only use about ten percent of our brains, that's a scientific fact", {"FALSE", "MISLEADING"}),
+    ("the capital of australia is sydney, everyone knows that", {"FALSE"}),
+    ("the titanic sank in 1912 after it hit an iceberg", {"TRUE"}),
+    ("light travels at roughly three hundred thousand kilometers per second", {"TRUE"}),
+    ("the moon is about 384,000 km away and the soviets were the first to land people on it in 1975", {"FALSE"}),
+    ("the great wall is over twenty thousand kilometers long when you count all of its branches", {"TRUE"}),
+    ("honestly I think this is the best pizza I've ever had, you guys should totally try it", set()),
+    ("okay so let's get into today's video, but first smash that like button and subscribe", set()),
+]
 
-Text: "The Eiffel Tower is 330 meters tall and was built in 1889 for the Paris World's Fair.
-Thomas Edison invented the lightbulb in 1879. Water boils at 100 degrees Celsius at sea level."
 
-Return ONLY valid JSON, no explanation."""
+async def bench(model: str) -> tuple[int, list[float]]:
+    checker.MODEL = model
+    await checker.check("warm up")  # load the model; not timed
+    correct, times = 0, []
+    for text, expected in CASES:
+        start = time.perf_counter()
+        results = await checker.check(text)
+        times.append(time.perf_counter() - start)
+        verdicts = {r["verdict"] for r in results}
+        ok = (not results) if not expected else bool(verdicts & expected)
+        correct += ok
+        print(f"  {'PASS' if ok else 'FAIL'} {times[-1]:5.1f}s  {sorted(verdicts) or '-'}  {text[:55]}")
+    return correct, times
 
-PASS_THRESHOLD_TOKS = 8  # minimum tokens/sec to be "real-time" viable
 
-def test_model(model_name):
-    payload = json.dumps({
-        "model": model_name,
-        "prompt": PROMPT,
-        "stream": False,
-        "options": {"num_predict": 200, "temperature": 0}
-    }).encode()
-
-    req = urllib.request.Request(
-        OLLAMA_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
-
-    try:
-        t0 = time.time()
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read().decode())
-        elapsed = time.time() - t0
-
-        eval_count = result.get("eval_count", 0)
-        eval_duration_ns = result.get("eval_duration", 1)
-        toks_per_sec = eval_count / (eval_duration_ns / 1e9)
-
-        response_text = result.get("response", "").strip()
-        # Simple quality check: does it produce JSON?
+async def main():
+    models = sys.argv[1:] or sorted(m.id for m in (await checker.client.models.list()).data
+                                    if not m.id.endswith("cloud"))
+    scores = {}
+    for model in models:
+        print(f"\n{model}")
         try:
-            parsed = json.loads(response_text)
-            quality = "✅ Valid JSON" if isinstance(parsed, list) else "⚠️  Not a list"
-        except Exception:
-            # Try to extract JSON block
-            start = response_text.find('[')
-            end = response_text.rfind(']') + 1
-            if start != -1 and end > start:
-                try:
-                    parsed = json.loads(response_text[start:end])
-                    quality = "⚠️  JSON found inside extra text"
-                except Exception:
-                    quality = "❌ Invalid JSON"
-            else:
-                quality = "❌ No JSON at all"
+            scores[model] = await bench(model)
+        except Exception as e:
+            print(f"  ERROR: {e}")
+    print(f"\n{'model':<22} {'accuracy':>8} {'median':>8} {'max':>7}")
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1][0], statistics.median(kv[1][1])))
+    for model, (correct, times) in ranked:
+        print(f"{model:<22} {correct:>4}/{len(CASES):<3} {statistics.median(times):>7.1f}s {max(times):>6.1f}s")
 
-        passed = toks_per_sec >= PASS_THRESHOLD_TOKS
-        return {
-            "model": model_name,
-            "toks_per_sec": round(toks_per_sec, 1),
-            "elapsed_s": round(elapsed, 1),
-            "quality": quality,
-            "passed": passed,
-            "response_preview": response_text[:200]
-        }
-    except Exception as e:
-        return {
-            "model": model_name,
-            "error": str(e),
-            "passed": False
-        }
-
-
-def main():
-    print("\n" + "="*60)
-    print("  Ollama Model Benchmark — Real-Time Fact Checker")
-    print("="*60)
-    print(f"  Threshold: >= {PASS_THRESHOLD_TOKS} tok/s  |  Valid JSON output")
-    print("="*60 + "\n")
-
-    results = []
-    for model in MODELS:
-        print(f"[→] Testing {model}...")
-        res = test_model(model)
-        results.append(res)
-        if "error" in res:
-            print(f"    ❌ ERROR: {res['error']}")
-        else:
-            status = "✅ PASS" if res["passed"] else "❌ FAIL"
-            print(f"    Speed   : {res['toks_per_sec']} tok/s  ({res['elapsed_s']}s total)")
-            print(f"    Quality : {res['quality']}")
-            print(f"    Result  : {status}")
-        print()
-
-    # Rank passing models by speed
-    passing = [r for r in results if r.get("passed") and "error" not in r]
-    passing.sort(key=lambda x: x["toks_per_sec"], reverse=True)
-
-    print("="*60)
-    print("  RESULTS SUMMARY")
-    print("="*60)
-    for r in results:
-        if "error" in r:
-            print(f"  {r['model']:<25}  ❌ Not available (pull first)")
-        else:
-            status = "✅ PASS" if r["passed"] else "❌ FAIL (too slow)"
-            print(f"  {r['model']:<25}  {r['toks_per_sec']:>6} tok/s  {status}  {r['quality']}")
-
-    print()
-    if passing:
-        winner = passing[0]
-        print(f"  🏆 WINNER: {winner['model']}  ({winner['toks_per_sec']} tok/s)")
-        print(f"     → Recommended for OLLAMA_MODEL in .env")
-    else:
-        print("  ⚠️  No models passed the threshold. Consider pulling a smaller model.")
-    print("="*60 + "\n")
-
-    # Write winner to a file for automated pickup
-    if passing:
-        with open("benchmark_winner.txt", "w") as f:
-            f.write(passing[0]["model"])
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

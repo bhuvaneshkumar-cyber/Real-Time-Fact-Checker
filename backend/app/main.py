@@ -1,66 +1,63 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import time
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI, HTTPException
+from loguru import logger
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+from pydantic import BaseModel, Field
 
-from app.routers import fact_check
+from app import checker
 from app.config import config
-from app.utils.logger import logger
 
-# Modern Lifespan approach replaces @app.on_event("startup")
+
+class FactCheckRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    videoTitle: str | None = Field(None, max_length=300)
+
+
+class FactCheckResult(BaseModel):
+    claim: str
+    verdict: str  # TRUE | FALSE | MISLEADING | UNVERIFIABLE
+    explanation: str
+    confidence: str  # HIGH | MEDIUM | LOW
+    source: str | None = None
+
+
+class FactCheckResponse(BaseModel):
+    results: list[FactCheckResult]
+    processingTimeMs: int
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up Real-Time Fact-Checker API...")
-    # Because we migrated to Pydantic BaseSettings, configuration is already 
-    # validated the moment `config` is imported. We just log success here.
-    logger.info(f"Configuration loaded successfully. Using LLM Provider: {config.LLM_PROVIDER}")
+    warm = asyncio.create_task(checker.warm_up())
     yield
-    logger.info("Shutting down Real-Time Fact-Checker API...")
+    warm.cancel()
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Real-Time Fact-Checker API",
-    description="API for extracting and verifying factual claims from audio/text streams.",
-    version="1.0.0",
-    lifespan=lifespan
-)
 
-# Configure CORS
-origins = ["*"]
+# No CORS middleware: the extension reaches this API via host_permissions (which bypass CORS),
+# and leaving it off stops arbitrary web pages from calling the local backend.
+app = FastAPI(title="Real-Time Fact-Checker API", version="2.0.0", lifespan=lifespan)
 
-if config.EXTENSION_ID:
-    # Explicitly define valid origins instead of relying on invalid port wildcards
-    origins = [
-        f"chrome-extension://{config.EXTENSION_ID}",
-        "http://localhost:3000",
-        "http://localhost:8001",
-        "http://localhost:8080",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8001",
-        "http://127.0.0.1:8080",
-    ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Include routers
-app.include_router(fact_check.router, prefix="/api/v1")
-
-# Health check endpoint
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy", "version": "1.0.0"}
+async def health():
+    return {"status": "ok", "provider": config.LLM_PROVIDER, "model": checker.MODEL,
+            "llm": await checker.llm_status(), "search": config.USE_SEARCH}
 
-# Root endpoint
-@app.get("/")
-async def root():
-    return {
-        "message": "Welcome to the Real-Time Fact-Checker API",
-        "docs": "/docs",
-        "health": "/health"
-    }
+
+@app.post("/api/v1/fact-check", response_model=FactCheckResponse)
+async def fact_check(req: FactCheckRequest):
+    start = time.perf_counter()
+    try:
+        results = await checker.check(req.text, req.videoTitle)
+    except APITimeoutError:
+        raise HTTPException(504, f"The LLM took longer than {config.REQUEST_TIMEOUT}s.")
+    except APIConnectionError:
+        raise HTTPException(503, f"Cannot reach the LLM ({config.LLM_PROVIDER}). Is it running?")
+    except APIStatusError as e:
+        raise HTTPException(502, f"LLM error: {e.message}")
+    ms = int((time.perf_counter() - start) * 1000)
+    logger.info(f"{len(results)} claim(s) in {ms}ms from {len(req.text)} chars")
+    return FactCheckResponse(results=results, processingTimeMs=ms)

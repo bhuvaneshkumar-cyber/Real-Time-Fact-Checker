@@ -1,90 +1,89 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Real-Time Fact Checker</title>
-    <style>
-        body {
-            width: 250px;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 15px;
-            background-color: #1e1e1e;
-        }
-        h1 {
-            color: #4fc3f7;
-            text-align: center;
-            font-size: 22px;
-            margin-top: 5px;
-        }
-        p {
-            color: #ccc;
-            font-size: 14px;
-            text-align: center;
-        }
-        .status {
-            margin: 15px 0;
-            padding: 10px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 4px;
-            text-align: center;
-            color: #fff;
-        }
-        .status.online { color: #a8e6cf; }
-        .status.offline { color: #f8d7da; }
-        
-        button {
-            width: 100%;
-            padding: 10px;
-            background: rgba(79, 195, 247, 0.2);
-            border: 1px solid rgba(79, 195, 247, 0.3);
-            color: #fff;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-bottom: 10px;
-            transition: background 0.2s ease;
-        }
-        button:hover {
-            background: rgba(79, 195, 247, 0.4);
-        }
-        
-        /* Make the start button pop a bit more */
-        .btn-primary {
-            background: rgba(40, 167, 69, 0.2);
-            border: 1px solid rgba(40, 167, 69, 0.4);
-            color: #a8e6cf;
-            font-weight: bold;
-        }
-        .btn-primary:hover {
-            background: rgba(40, 167, 69, 0.4);
-        }
+  <meta charset="UTF-8">
+  <title>Fact Checker</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    html, body { margin: 0; background: #12141a; }
+    body { width: 340px; padding: 14px; font: 13px/1.45 var(--font); color: var(--text); box-sizing: border-box; }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    header img { width: 30px; height: 30px; }
+    header div { flex: 1; min-width: 0; }
+    h1 { margin: 0; font-size: 15px; font-weight: 700; }
+    h2 { margin: 0 0 8px; font-size: 12px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 11.5px; }
+    #model { margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-        .btn-danger {
-            background: rgba(220, 53, 69, 0.2);
-            border: 1px solid rgba(220, 53, 69, 0.4);
-            color: #ffb3ba;
-            font-weight: bold;
-        }
-        .btn-danger:hover {
-            background: rgba(220, 53, 69, 0.4);
-        }
+    .pill { all: unset; flex: none; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; cursor: pointer;
+            color: var(--c, var(--muted)); background: color-mix(in srgb, var(--c, var(--muted)) 16%, transparent); }
+    .pill.ok { --c: var(--true); } .pill.warn { --c: var(--misleading); } .pill.bad { --c: var(--false); }
 
-        button:last-child {
-            margin-bottom: 0; 
-        }
-    </style>
+    .hint { margin: 0 0 12px; padding: 9px 11px; border-radius: 10px; background: rgba(255, 181, 71, 0.1); color: #ffd79a; font-size: 12px; }
+    code { display: block; margin-top: 5px; padding: 6px 8px; border-radius: 6px; background: rgba(0, 0, 0, 0.35); color: var(--text);
+           font: 11.5px/1.4 ui-monospace, Consolas, monospace; user-select: all; word-break: break-all; }
+
+    section { padding: 12px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+    button.btn { all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+                 padding: 10px; border-radius: 10px; font-weight: 650; cursor: pointer; color: #0b1220; background: var(--accent); }
+    button.btn:hover { filter: brightness(1.08); }
+    button.btn.danger { color: #fff; background: var(--false); }
+    button.btn:disabled { opacity: 0.55; cursor: default; filter: none; }
+    button.btn:focus-visible, .pill:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    #captureStatus { margin: 8px 0 0; }
+    #captureStatus.error { color: #ffb3b3; }
+
+    .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+    .switch span { flex: 1; }
+    .switch small { display: block; color: var(--muted); }
+    .switch input { appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 999px;
+                    background: rgba(255, 255, 255, 0.16); cursor: pointer; transition: background 0.2s; }
+    .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 0.2s; }
+    .switch input:checked { background: var(--true); }
+    .switch input:checked::after { transform: translateX(14px); }
+
+    textarea { box-sizing: border-box; width: 100%; min-height: 64px; margin-bottom: 8px; padding: 8px 10px; resize: vertical;
+               font: 13px/1.4 var(--font); color: var(--text); background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); border-radius: 8px; }
+    #results { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    #results:empty { display: none; }
+    footer { text-align: center; }
+    kbd { padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+  </style>
 </head>
 <body>
-    <h1>Fact Checker</h1>
-    <p>Real-time fact-checking for YouTube and web audio.</p>
-    
-    <div class="status" id="status">Checking connection...</div>
-    
-    <button id="startCapture" class="btn-primary">Start Listening to Tab</button>
-    <button id="stopCapture" class="btn-danger" style="display: none;">Stop Listening</button>
-    
-    <button id="checkBackend">Check Backend</button>
+  <header>
+    <img src="icons/icon48.png" alt="">
+    <div>
+      <h1>Fact Checker</h1>
+      <p id="model" class="muted small">Checking backend…</p>
+    </div>
+    <button id="health" class="pill" title="Re-check backend">…</button>
+  </header>
+  <div id="hint" class="hint" hidden></div>
 
+  <section>
+    <button id="listen" class="btn">Listen to this tab</button>
+    <p id="captureStatus" class="muted small"></p>
+  </section>
 
-    <script src="popup.js"></script>
+  <section>
+    <label class="switch">
+      <span><b>Auto-check YouTube captions</b><small>Reads CC on YouTube videos, no audio capture</small></span>
+      <input type="checkbox" id="captions" role="switch">
+    </label>
+  </section>
+
+  <section>
+    <h2>Check a statement</h2>
+    <textarea id="text" placeholder="e.g. The Great Wall of China is visible from the Moon"></textarea>
+    <button id="check" class="btn">Check <span class="small">Ctrl+Enter</span></button>
+    <div id="results" aria-live="polite"></div>
+  </section>
+
+  <footer class="muted small">Tip: select text on any page → right-click → <b>Fact-check</b></footer>
+
+  <script src="ui.js"></script>
+  <script src="popup.js"></script>
 </body>
 </html>

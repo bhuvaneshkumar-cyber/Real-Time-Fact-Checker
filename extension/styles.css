@@ -1,194 +1,159 @@
-/* Styles for the Real-Time Fact Checker extension */
-/* Glassmorphism design system */
+/* Shared by the in-page panel (inside a shadow root, via :host) and the popup (via :root). */
 
-:root {
-  /* Added variables for easier theme management */
-  --glass-bg: rgba(30, 30, 30, 0.6); /* Switched to dark glass for universal readability */
-  --glass-border: rgba(255, 255, 255, 0.15);
-  --text-main: #ffffff;
-  --text-muted: #e0e0e0;
+:host { all: initial; }
+
+:host, :root {
+  --bg: rgba(16, 18, 24, 0.94);
+  --surface: rgba(255, 255, 255, 0.04);
+  --line: rgba(255, 255, 255, 0.09);
+  --text: #eef1f6;
+  --muted: #9aa3b2;
+  --soft: #c7cdd8;
+  --accent: #7aa7ff;
+  --true: #3ddc97;
+  --false: #ff6b6b;
+  --misleading: #ffb547;
+  --unverifiable: #8b95a7;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Container for the fact-checker UI */
-.fact-checker-container {
-  /* Fixed positioning so it actually floats on the screen */
-  position: fixed; 
-  bottom: 20px;
+/* ── Floating panel ── */
+
+.panel {
+  position: fixed;
   right: 20px;
-  z-index: 2147483647; /* Maximum z-index for browser extensions */
-  
-  /* Layout & Glassmorphism */
-  box-sizing: border-box;
-  background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-  
-  /* Typography */
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: var(--text-main);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); /* Unified shadow for readability */
-  
-  padding: 15px;
-  margin: 0;
-  width: 350px; /* Added base width */
-  max-width: 90vw;
-  transition: all 0.3s ease;
+  bottom: 20px;
+  z-index: 2147483647;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  font: 13px/1.45 var(--font);
+  color: var(--text);
+  background: var(--bg);
+  backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  animation: rise 0.25s ease-out;
 }
+:host(.fs) .panel { bottom: 90px; } /* clear the video controls in fullscreen */
 
-/* Status indicator */
-.fact-checker-status {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
-  text-align: center;
-  padding: 8px 4px;
-  letter-spacing: 0.3px;
-}
-
-/* Individual fact-check result item */
-.fact-checker-item {
-  /* Added relative positioning to anchor the absolute close button */
-  position: relative; 
-  
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
-  animation: slideIn 0.3s ease-out;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.fact-checker-item:last-child {
-  margin-bottom: 0; /* Prevents awkward bottom spacing */
-}
-
-.fact-checker-item:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-}
-
-/* Verdict styling */
-.fact-checker-verdict-true {
-  background: rgba(40, 167, 69, 0.25);
-  color: #a8e6cf;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 13px;
-}
-
-.fact-checker-verdict-false {
-  background: rgba(220, 53, 69, 0.25);
-  color: #ffb3ba; /* Adjusted for better contrast against dark glass */
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 13px;
-}
-
-.fact-checker-verdict-lacks {
-  background: rgba(108, 117, 125, 0.3);
-  color: #e2e3e5;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 13px;
-}
-
-/* Text elements */
-.fact-checker-claim {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  margin: 0 0 8px 0; /* Reset default margins */
-  word-break: break-word;
-  padding-right: 20px; /* Make room for the close button */
-}
-
-.fact-checker-explanation {
-  font-size: 13px;
-  line-height: 1.5;
-  margin: 0 0 8px 0;
-  color: var(--text-muted);
-}
-
-.fact-checker-source {
-  font-size: 12px;
-  margin-top: 8px;
-}
-
-.fact-checker-source a {
-  color: #4fc3f7;
-  text-decoration: none;
-  border-bottom: 1px dotted #4fc3f7;
-  transition: opacity 0.2s ease;
-}
-
-.fact-checker-source a:hover {
-  opacity: 0.7;
-}
-
-/* Close button */
-.fact-checker-close {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 18px;
-  font-weight: bold;
-  cursor: pointer;
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
-  line-height: 24px;
-  text-align: center;
-  border-radius: 50%;
-  transition: all 0.2s ease;
-  padding: 0;
+.panel header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.panel.min header { border-bottom: 0; }
+.panel.min .cards { display: none; }
+.panel.min [data-act="min"] svg { transform: rotate(180deg); }
+
+.dot { flex: none; width: 8px; height: 8px; margin-right: 4px; border-radius: 50%; background: var(--unverifiable); }
+.dot.live { background: var(--true); animation: pulse 1.8s infinite; }
+.dot.busy { background: var(--misleading); }
+
+.title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.title strong { font-size: 13px; font-weight: 650; }
+.status { overflow: hidden; color: var(--muted); font-size: 11.5px; white-space: nowrap; text-overflow: ellipsis; }
+.status button { all: unset; cursor: pointer; color: var(--accent); font-weight: 600; }
+
+.counts { display: flex; gap: 4px; }
+.count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 16%, transparent);
 }
 
-.fact-checker-close:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+.icon {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.icon:focus-visible, .time:focus-visible, .status button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.icon[aria-pressed="true"] { color: var(--misleading); background: rgba(255, 181, 71, 0.14); }
+.icon svg { transition: transform 0.2s; }
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(60vh, 540px);
+  padding: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+.cards:empty { display: none; }
+.panel.issues .card[data-verdict="TRUE"] { display: none; }
+
+/* ── Result cards (panel + popup) ── */
+
+.card {
+  --c: var(--accent); /* pending; verdict colours below override it (same specificity, later wins) */
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--c);
+  border-radius: 10px;
+  animation: rise 0.25s ease-out;
+  transition: opacity 0.3s;
+}
+[data-verdict="TRUE"] { --c: var(--true); }
+[data-verdict="FALSE"] { --c: var(--false); }
+[data-verdict="MISLEADING"] { --c: var(--misleading); }
+[data-verdict="UNVERIFIABLE"] { --c: var(--unverifiable); }
+.card.error { --c: var(--false); color: #ffc2c2; }
+.card.empty { --c: var(--line); }
+.card.gone { opacity: 0; }
+.card p { margin: 0; }
+
+.row { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.verdict {
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 16%, transparent);
+}
+.meta { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.time { all: unset; color: var(--accent); font-variant-numeric: tabular-nums; cursor: pointer; }
+.time:hover { text-decoration: underline; }
+
+.claim { margin: 7px 0 3px !important; font-size: 13.5px; font-weight: 560; line-height: 1.4; }
+.why { color: var(--soft); }
+.heard { margin-top: 6px !important; color: var(--muted); font-style: italic; word-break: break-word; }
+.source { display: inline-block; margin-top: 7px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.source:hover { text-decoration: underline; }
+
+.spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
-/* Error state */
-.fact-checker-error {
-  background: rgba(220, 53, 69, 0.15);
-  border: 1px solid rgba(220, 53, 69, 0.4);
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.55); }
+  70%, 100% { box-shadow: 0 0 0 7px rgba(61, 220, 151, 0); }
 }
-
-/* Animation for sliding in */
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Responsive adjustments */
-@media (max-width: 480px) {
-  .fact-checker-container {
-    bottom: 10px;
-    right: 50%;
-    transform: translateX(50%); /* Centers the extension on mobile screens */
-    width: 95vw;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .panel, .card, .dot.live, .spinner { animation: none; }
 }

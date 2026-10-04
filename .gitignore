@@ -1,23 +1,11 @@
-# Environments
-venv/
-env/
-.env
-Lib/
-
 # Python
+venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-*.db
+.env
 
-# Logs and scratch files
+# Logs
 *.log
-logs/
-*.bak
-*.backup
-dy
-some.md
 
 # IDE
 .vscode/

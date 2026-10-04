@@ -1,171 +1,116 @@
-// Background service worker for the Real-Time Fact Checker extension
+// Service worker: proxies the backend, owns tab-audio capture (via an offscreen document),
+// and adds the "Fact-check selection" context menu.
 
-// Default backend URL (can be overridden by storage)
-let BACKEND_URL = "http://localhost:8001";
+const API = 'http://localhost:8001';
 
-// Load the backend URL from storage when the extension starts
-chrome.storage.local.get(["backendUrl"], (result) => {
-  if (chrome.runtime.lastError) {
-    console.error("Fact Checker: Error reading backendUrl from storage:", chrome.runtime.lastError);
-  } else if (result && result.backendUrl) {
-    BACKEND_URL = result.backendUrl;
-    console.log(`Fact Checker: Loaded backend URL from storage: ${BACKEND_URL}`);
-  } else {
-    console.log(`Fact Checker: Using default backend URL: ${BACKEND_URL}`);
-  }
-});
-
-// Listen for changes to the backend URL in storage
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === "local" && changes.backendUrl) {
-    BACKEND_URL = changes.backendUrl.newValue;
-    console.log(`Fact Checker: Backend URL updated to: ${BACKEND_URL}`);
-  }
-});
-
-/**
- * Proxy function to forward a fact-check request to the backend.
- * @param {string} text - The text chunk to fact-check.
- * @param {string} videoId - Optional YouTube video ID.
- * @returns {Promise<Object>} - The fact-check response from the backend.
- */
-async function factCheckProxy(text, videoId = null, videoTitle = null, context = null) {
+async function api(path, body) {
+  let res;
   try {
-    const response = await fetch(`${BACKEND_URL}/api/v1/fact-check`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text, videoId, videoTitle, context }),
-    });
+    res = await fetch(API + path, body
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) }
+      : { signal: AbortSignal.timeout(5000) });
+  } catch (e) {
+    throw new Error(e.name === 'TimeoutError' ? 'The backend timed out.' : 'Backend offline. Start it: uvicorn app.main:app --port 8001');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Backend error ${res.status}`);
+  return data;
+}
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+// ── Tab audio capture ──
+// State lives in storage.session so it survives service-worker restarts; the popup watches it.
 
-    return await response.json();
-  } catch (error) {
-    console.error("Fact Checker: Error in fact-check proxy:", error);
-    throw error;
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+  } catch {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['ui.js', 'content_script.js'] });
   }
 }
 
-/**
- * Listen for messages from the content script, popup, and offscreen document.
- */
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-  // ─── ROUTE 1: YouTube Caption fact-check (content_script.js) ───
-  // The content script sends text and expects a response via sendResponse callback.
-  if (message.action === 'factCheck') {
-    factCheckProxy(message.text, message.videoId, message.videoTitle, message.context)
-      .then((result) => {
-        sendResponse({ success: true, data: result });
-      })
-      .catch((error) => {
-        console.error("Fact Checker: Backend API Error (factCheck):", error);
-        sendResponse({ success: false, error: error.message });
-      });
-    return true; // Keep the message channel open for the async sendResponse
-  }
-
-  // ─── ROUTE 2: Whisper transcription result (offscreen.js) ───
-  // The offscreen document transcribed audio and sent us the text.
-  // We show a "processing" card immediately, then call the backend.
-  if (message.action === 'transcriptionReady') {
-    const factCheckId = 'fc-' + Date.now();
-
-    // 1. Immediately tell the Content Script to show a "Processing..." UI card
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          action: 'transcriptionProcessing',
-          id: factCheckId,
-          text: message.text
-        });
-      }
-    });
-
-    // 2. Call the Python backend
-    factCheckProxy(message.text, null)
-      .then((result) => {
-        // 3. Send the final verdict back to update the specific UI card
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'displayFactCheckResults',
-              id: factCheckId,
-              data: result
-            });
-          }
-        });
-      })
-      .catch((error) => {
-        console.error("Fact Checker: Backend API Error:", error);
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) {
-            chrome.tabs.sendMessage(tabs[0].id, {
-              action: 'factCheckError',
-              id: factCheckId
-            });
-          }
-        });
-      });
-
-    return true;
-  }
-
-  // ─── ROUTE 3: Start Tab Capture (popup.js) ───
-  // The user clicked "Start Listening to Tab" in the popup.
-  if (message.action === 'startTabCapture') {
-    if (message.tabId) {
-      startCapturingTab(message.tabId);
-    }
-    return false;
-  }
-  
-  // ─── ROUTE 4: Stop Tab Capture (popup.js) ───
-  if (message.action === 'stopTabCapture') {
-    chrome.runtime.sendMessage({ action: 'stopTabStream' });
-    return false;
-  }
-});
-
-/**
- * Starts capturing audio from a specific browser tab.
- * Creates an offscreen document (if needed) and passes the stream ID to it.
- */
-async function startCapturingTab(tabId) {
+async function startCapture(tabId) {
+  await stopCapture();
   try {
-    // 1. Get the stream ID, catching Chrome's locked-state errors
-    const streamId = await new Promise((resolve, reject) => {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (id) => {
-        if (chrome.runtime.lastError) {
-          return reject(new Error(chrome.runtime.lastError.message));
-        }
-        resolve(id);
-      });
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    await ensureContentScript(tabId);
+    await chrome.storage.session.set({ capture: { tabId, state: 'loading', detail: 'Starting…' }, captureError: '' });
+    // The stream ID rides in the URL, so the document has it the moment it loads (IDs expire in seconds).
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html#' + streamId,
+      reasons: ['USER_MEDIA'],
+      justification: 'Transcribe tab audio for live fact-checking',
     });
-
-    // 2. Ensure an offscreen document exists
-    const hasDocument = await chrome.offscreen.hasDocument();
-    if (!hasDocument) {
-      await chrome.offscreen.createDocument({
-        url: 'offscreen.html',
-        reasons: ['USER_MEDIA'],
-        justification: 'Recording tab audio for real-time fact-checking'
-      });
-    }
-
-    // 3. Send the valid stream ID to the offscreen document for Whisper processing
-    chrome.runtime.sendMessage({
-      action: 'processTabStream',
-      streamId: streamId
-    });
-
-  } catch (error) {
-    console.warn("Fact Checker: Ignored capture request -", error.message);
+    chrome.action.setBadgeText({ text: 'ON' });
+  } catch (e) {
+    await stopCapture(e.message);
+    throw e;
   }
 }
 
-console.log("Fact Checker: Background service worker started.");
+async function stopCapture(error = '') {
+  const { capture } = await chrome.storage.session.get('capture');
+  if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument(); // releases stream + Whisper
+  await chrome.storage.session.set({ capture: null, captureError: error });
+  chrome.action.setBadgeText({ text: '' });
+  if (capture) chrome.tabs.sendMessage(capture.tabId, { action: 'audioStatus', state: 'off', detail: error }).catch(() => {});
+}
+
+async function toCaptureTab(msg) {
+  const { capture } = await chrome.storage.session.get('capture');
+  if (!capture) return;
+  try {
+    await chrome.tabs.sendMessage(capture.tabId, msg);
+  } catch {
+    try { // page reloaded: re-inject once
+      await ensureContentScript(capture.tabId);
+      await chrome.tabs.sendMessage(capture.tabId, msg);
+    } catch {
+      await stopCapture('The page changed. Click "Listen to this tab" again.');
+    }
+  }
+}
+
+async function onAudioStatus({ state, detail }) {
+  if (state === 'off' || state === 'error') return stopCapture(detail);
+  const { capture } = await chrome.storage.session.get('capture');
+  if (!capture) return;
+  await chrome.storage.session.set({ capture: { ...capture, state, detail } });
+  toCaptureTab({ action: 'audioStatus', state, detail });
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  const handlers = {
+    factCheck: () => api('/api/v1/fact-check', { text: msg.text, videoTitle: msg.videoTitle }),
+    health: () => api('/health'),
+    startCapture: () => startCapture(msg.tabId),
+    stopCapture: () => stopCapture(),
+  };
+  if (handlers[msg.action]) {
+    handlers[msg.action]().then((data) => reply({ data }), (e) => reply({ error: e.message }));
+    return true; // async reply
+  }
+  if (msg.action === 'transcript') toCaptureTab(msg);
+  if (msg.action === 'audioStatus') onAudioStatus(msg);
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const { capture } = await chrome.storage.session.get('capture');
+  if (capture?.tabId === tabId) stopCapture();
+});
+
+// ── Context menu ──
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({ id: 'fact-check', title: 'Fact-check "%s"', contexts: ['selection'] });
+});
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  try {
+    await ensureContentScript(tab.id);
+    await chrome.tabs.sendMessage(tab.id, { action: 'checkText', text: info.selectionText });
+  } catch (e) {
+    console.warn('Fact Checker: cannot show results on this page:', e.message);
+  }
+});
+
+chrome.action.setBadgeBackgroundColor({ color: '#e5484d' });
